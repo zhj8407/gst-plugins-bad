@@ -27,38 +27,6 @@
 GST_DEBUG_CATEGORY_EXTERN (gst_jp2k_decimator_debug);
 #define GST_CAT_DEFAULT gst_jp2k_decimator_debug
 
-/* Delimiting markers and marker segments */
-#define MARKER_SOC 0xFF4F
-#define MARKER_SOT 0xFF90
-#define MARKER_SOD 0xFF93
-#define MARKER_EOC 0xFFD9
-
-/* Fixed information marker segments */
-#define MARKER_SIZ 0xFF51
-
-/* Functional marker segments */
-#define MARKER_COD 0xFF52
-#define MARKER_COC 0xFF53
-#define MARKER_RGN 0xFF5E
-#define MARKER_QCD 0xFF5C
-#define MARKER_QCC 0xFF5D
-#define MARKER_POC 0xFF5F
-
-/* Pointer marker segments */
-#define MARKER_PLM 0xFF57
-#define MARKER_PLT 0xFF58
-#define MARKER_PPM 0xFF60
-#define MARKER_PPT 0xFF61
-#define MARKER_TLM 0xFF55
-
-/* In-bit-stream markers and marker segments */
-#define MARKER_SOP 0xFF91
-#define MARKER_EPH 0xFF92
-
-/* Informational marker segments */
-#define MARKER_CRG 0xFF63
-#define MARKER_COM 0xFF64
-
 static void
 packet_iterator_changed_resolution_or_component (PacketIterator * it)
 {
@@ -400,7 +368,7 @@ static GstFlowReturn
 init_packet_iterator (GstJP2kDecimator * self, PacketIterator * it,
     const MainHeader * header, const Tile * tile)
 {
-  ProgressionOrder order;
+  GstJPEG2000ProgressionOrder order;
   gint i, j;
 
   memset (it, 0, sizeof (PacketIterator));
@@ -413,8 +381,8 @@ init_packet_iterator (GstJP2kDecimator * self, PacketIterator * it,
   it->n_layers = (tile->cod) ? tile->cod->n_layers : header->cod.n_layers;
   it->n_resolutions =
       1 +
-      ((tile->cod) ? tile->cod->n_decompositions : header->cod.
-      n_decompositions);
+      ((tile->cod) ? tile->cod->n_decompositions : header->
+      cod.n_decompositions);
   it->n_components = header->siz.n_components;
 
   it->tx0 = tile->tx0;
@@ -457,17 +425,17 @@ init_packet_iterator (GstJP2kDecimator * self, PacketIterator * it,
   }
 
   order =
-      (tile->cod) ? tile->cod->progression_order : header->cod.
-      progression_order;
-  if (order == PROGRESSION_ORDER_LRCP) {
+      (tile->cod) ? tile->cod->progression_order : header->
+      cod.progression_order;
+  if (order == GST_JPEG2000_PROGRESSION_ORDER_LRCP) {
     it->next = packet_iterator_next_lrcp;
-  } else if (order == PROGRESSION_ORDER_RLCP) {
+  } else if (order == GST_JPEG2000_PROGRESSION_ORDER_RLCP) {
     it->next = packet_iterator_next_rlcp;
-  } else if (order == PROGRESSION_ORDER_RPCL) {
+  } else if (order == GST_JPEG2000_PROGRESSION_ORDER_RPCL) {
     it->next = packet_iterator_next_rpcl;
-  } else if (order == PROGRESSION_ORDER_PCRL) {
+  } else if (order == GST_JPEG2000_PROGRESSION_ORDER_PCRL) {
     it->next = packet_iterator_next_pcrl;
-  } else if (order == PROGRESSION_ORDER_CPRL) {
+  } else if (order == GST_JPEG2000_PROGRESSION_ORDER_CPRL) {
     it->next = packet_iterator_next_cprl;
   } else {
     GST_ERROR_OBJECT (self, "Progression order %d not supported", order);
@@ -540,7 +508,7 @@ write_siz (GstJP2kDecimator * self, GstByteWriter * writer,
     return GST_FLOW_ERROR;
   }
 
-  gst_byte_writer_put_uint16_be_unchecked (writer, MARKER_SIZ);
+  gst_byte_writer_put_uint16_be_unchecked (writer, GST_JPEG2000_MARKER_SIZ);
   gst_byte_writer_put_uint16_be_unchecked (writer, 38 + 3 * siz->n_components);
   gst_byte_writer_put_uint16_be_unchecked (writer, siz->caps);
   gst_byte_writer_put_uint32_be_unchecked (writer, siz->x);
@@ -637,13 +605,13 @@ write_cod (GstJP2kDecimator * self, GstByteWriter * writer,
     return GST_FLOW_ERROR;
   }
 
-  gst_byte_writer_put_uint16_be_unchecked (writer, MARKER_COD);
+  gst_byte_writer_put_uint16_be_unchecked (writer, GST_JPEG2000_MARKER_COD);
   gst_byte_writer_put_uint16_be_unchecked (writer, tmp);
 
   /* Scod */
   tmp =
-      (cod->PPx ? 0x01 : 0x00) | (cod->sop ? 0x02 : 0x00) | (cod->
-      eph ? 0x04 : 0x00);
+      (cod->PPx ? 0x01 : 0x00) | (cod->
+      sop ? 0x02 : 0x00) | (cod->eph ? 0x04 : 0x00);
   gst_byte_writer_put_uint8_unchecked (writer, tmp);
 
   /* SGcod */
@@ -757,7 +725,7 @@ write_plt (GstJP2kDecimator * self, GstByteWriter * writer,
     return GST_FLOW_ERROR;
   }
 
-  gst_byte_writer_put_uint16_be_unchecked (writer, MARKER_PLT);
+  gst_byte_writer_put_uint16_be_unchecked (writer, GST_JPEG2000_MARKER_PLT);
   plt_start_pos = gst_byte_writer_get_pos (writer);
   gst_byte_writer_put_uint16_be_unchecked (writer, 0);
 
@@ -891,7 +859,7 @@ parse_packet (GstJP2kDecimator * self, GstByteReader * reader,
         goto done;
       }
 
-      if (marker == MARKER_SOP) {
+      if (marker == GST_JPEG2000_MARKER_SOP) {
         guint16 dummy;
 
         gst_byte_reader_skip_unchecked (reader, 2);
@@ -934,7 +902,7 @@ parse_packet (GstJP2kDecimator * self, GstByteReader * reader,
       goto done;
     }
 
-    if (marker != MARKER_SOP) {
+    if (marker != GST_JPEG2000_MARKER_SOP) {
       GST_ERROR_OBJECT (self, "No SOP marker");
       ret = GST_FLOW_EOS;
       goto done;
@@ -965,7 +933,8 @@ parse_packet (GstJP2kDecimator * self, GstByteReader * reader,
         goto done;
       }
 
-      if (marker == MARKER_SOP || marker == MARKER_EOC || marker == MARKER_SOT) {
+      if (marker == GST_JPEG2000_MARKER_SOP || marker == GST_JPEG2000_MARKER_EOC
+          || marker == GST_JPEG2000_MARKER_SOT) {
         Packet *p = g_slice_new (Packet);
 
         p->sop = TRUE;
@@ -975,7 +944,8 @@ parse_packet (GstJP2kDecimator * self, GstByteReader * reader,
         p->length = reader->byte - packet_start_pos;
         tile->packets = g_list_prepend (tile->packets, p);
 
-        if (marker == MARKER_EOC || marker == MARKER_SOT)
+        if (marker == GST_JPEG2000_MARKER_EOC
+            || marker == GST_JPEG2000_MARKER_SOT)
           goto done;
         else
           break;
@@ -1011,7 +981,7 @@ parse_packets (GstJP2kDecimator * self, GstByteReader * reader,
 
   /* Start of data here */
   if (!gst_byte_reader_get_uint16_be (reader, &marker)
-      && marker != MARKER_SOD) {
+      && marker != GST_JPEG2000_MARKER_SOD) {
     GST_ERROR_OBJECT (self, "No SOD in tile");
     return GST_FLOW_ERROR;
   }
@@ -1046,7 +1016,7 @@ parse_tile (GstJP2kDecimator * self, GstByteReader * reader,
     goto done;
   }
 
-  if (marker != MARKER_SOT) {
+  if (marker != GST_JPEG2000_MARKER_SOT) {
     GST_ERROR_OBJECT (self, "Unexpected marker 0x%04x", marker);
     ret = GST_FLOW_ERROR;
     goto done;
@@ -1104,7 +1074,7 @@ parse_tile (GstJP2kDecimator * self, GstByteReader * reader,
     }
 
     /* SOD starts the data */
-    if (marker == MARKER_SOD) {
+    if (marker == GST_JPEG2000_MARKER_SOD) {
       break;
     }
 
@@ -1136,7 +1106,7 @@ parse_tile (GstJP2kDecimator * self, GstByteReader * reader,
         gst_byte_reader_get_pos (reader), length);
 
     switch (marker) {
-      case MARKER_COD:
+      case GST_JPEG2000_MARKER_COD:
         if (tile->cod) {
           GST_ERROR_OBJECT (self, "Only one COD allowed");
           ret = GST_FLOW_ERROR;
@@ -1148,23 +1118,23 @@ parse_tile (GstJP2kDecimator * self, GstByteReader * reader,
         if (ret != GST_FLOW_OK)
           goto done;
         break;
-      case MARKER_COC:
+      case GST_JPEG2000_MARKER_COC:
         GST_ERROR_OBJECT (self, "COC marker not supported yet");
         ret = GST_FLOW_ERROR;
         goto done;
-      case MARKER_POC:
+      case GST_JPEG2000_MARKER_POC:
         GST_ERROR_OBJECT (self, "POC marker not supported yet");
         ret = GST_FLOW_ERROR;
         goto done;
-      case MARKER_RGN:
+      case GST_JPEG2000_MARKER_RGN:
         GST_ERROR_OBJECT (self, "RGN marker not supported yet");
         ret = GST_FLOW_ERROR;
         goto done;
-      case MARKER_PPT:
+      case GST_JPEG2000_MARKER_PPT:
         GST_ERROR_OBJECT (self, "PPT marker not supported yet");
         ret = GST_FLOW_ERROR;
         goto done;
-      case MARKER_PLT:{
+      case GST_JPEG2000_MARKER_PLT:{
         PacketLengthTilePart *plt = g_slice_new (PacketLengthTilePart);
 
         ret = parse_plt (self, reader, plt, length);
@@ -1176,7 +1146,7 @@ parse_tile (GstJP2kDecimator * self, GstByteReader * reader,
         tile->plt = g_list_append (tile->plt, plt);
         break;
       }
-      case MARKER_QCD:
+      case GST_JPEG2000_MARKER_QCD:
         if (tile->qcd != NULL) {
           GST_ERROR_OBJECT (self, "Multiple QCD markers");
           ret = GST_FLOW_ERROR;
@@ -1187,7 +1157,7 @@ parse_tile (GstJP2kDecimator * self, GstByteReader * reader,
         tile->qcd->length = length - 2;
         gst_byte_reader_skip_unchecked (reader, length - 2);
         break;
-      case MARKER_QCC:{
+      case GST_JPEG2000_MARKER_QCC:{
         Buffer *p = g_slice_new (Buffer);
         p->data = gst_byte_reader_peek_data_unchecked (reader);
         p->length = length - 2;
@@ -1195,7 +1165,7 @@ parse_tile (GstJP2kDecimator * self, GstByteReader * reader,
         gst_byte_reader_skip_unchecked (reader, length - 2);
         break;
       }
-      case MARKER_COM:{
+      case GST_JPEG2000_MARKER_COM:{
         Buffer *p = g_slice_new (Buffer);
         p->data = gst_byte_reader_peek_data_unchecked (reader);
         p->length = length - 2;
@@ -1333,7 +1303,7 @@ write_packet (GstJP2kDecimator * self, GstByteWriter * writer,
   }
 
   if (packet->sop) {
-    gst_byte_writer_put_uint16_be_unchecked (writer, MARKER_SOP);
+    gst_byte_writer_put_uint16_be_unchecked (writer, GST_JPEG2000_MARKER_SOP);
     gst_byte_writer_put_uint16_be_unchecked (writer, 4);
     gst_byte_writer_put_uint16_be_unchecked (writer, packet->seqno);
   }
@@ -1343,7 +1313,7 @@ write_packet (GstJP2kDecimator * self, GstByteWriter * writer,
   } else {
     gst_byte_writer_put_uint8_unchecked (writer, 0);
     if (packet->eph) {
-      gst_byte_writer_put_uint16_be_unchecked (writer, MARKER_EPH);
+      gst_byte_writer_put_uint16_be_unchecked (writer, GST_JPEG2000_MARKER_EPH);
     }
   }
 
@@ -1362,7 +1332,7 @@ write_tile (GstJP2kDecimator * self, GstByteWriter * writer,
     return GST_FLOW_ERROR;
   }
 
-  gst_byte_writer_put_uint16_be_unchecked (writer, MARKER_SOT);
+  gst_byte_writer_put_uint16_be_unchecked (writer, GST_JPEG2000_MARKER_SOT);
   gst_byte_writer_put_uint16_be_unchecked (writer, 10);
 
   gst_byte_writer_put_uint16_be_unchecked (writer, tile->sot.tile_index);
@@ -1377,7 +1347,8 @@ write_tile (GstJP2kDecimator * self, GstByteWriter * writer,
   }
 
   if (tile->qcd) {
-    ret = write_marker_buffer (self, writer, MARKER_QCD, tile->qcd);
+    ret =
+        write_marker_buffer (self, writer, GST_JPEG2000_MARKER_QCD, tile->qcd);
     if (ret != GST_FLOW_OK)
       goto done;
   }
@@ -1385,7 +1356,7 @@ write_tile (GstJP2kDecimator * self, GstByteWriter * writer,
   for (l = tile->qcc; l; l = l->next) {
     Buffer *p = l->data;
 
-    ret = write_marker_buffer (self, writer, MARKER_QCC, p);
+    ret = write_marker_buffer (self, writer, GST_JPEG2000_MARKER_QCC, p);
     if (ret != GST_FLOW_OK)
       goto done;
   }
@@ -1401,12 +1372,12 @@ write_tile (GstJP2kDecimator * self, GstByteWriter * writer,
   for (l = tile->com; l; l = l->next) {
     Buffer *p = l->data;
 
-    ret = write_marker_buffer (self, writer, MARKER_COM, p);
+    ret = write_marker_buffer (self, writer, GST_JPEG2000_MARKER_COM, p);
     if (ret != GST_FLOW_OK)
       goto done;
   }
 
-  if (!gst_byte_writer_put_uint16_be (writer, MARKER_SOD)) {
+  if (!gst_byte_writer_put_uint16_be (writer, GST_JPEG2000_MARKER_SOD)) {
     GST_ERROR_OBJECT (self, "Could not ensure free space");
     ret = GST_FLOW_ERROR;
     goto done;
@@ -1434,7 +1405,7 @@ parse_main_header (GstJP2kDecimator * self, GstByteReader * reader,
 
   /* First SOC */
   if (!gst_byte_reader_get_uint16_be (reader, &marker)
-      || marker != MARKER_SOC) {
+      || marker != GST_JPEG2000_MARKER_SOC) {
     GST_ERROR_OBJECT (self, "Frame does not start with SOC");
     ret = GST_FLOW_ERROR;
     goto done;
@@ -1448,10 +1419,10 @@ parse_main_header (GstJP2kDecimator * self, GstByteReader * reader,
     }
 
     /* SOT starts the tiles */
-    if (marker == MARKER_SOT) {
+    if (marker == GST_JPEG2000_MARKER_SOT) {
       ret = GST_FLOW_OK;
       break;
-    } else if (marker == MARKER_EOC) {
+    } else if (marker == GST_JPEG2000_MARKER_EOC) {
       GST_WARNING_OBJECT (self, "EOC marker before SOT");
       ret = GST_FLOW_EOS;
       goto done;
@@ -1484,7 +1455,7 @@ parse_main_header (GstJP2kDecimator * self, GstByteReader * reader,
         gst_byte_reader_get_pos (reader), length);
 
     switch (marker) {
-      case MARKER_SIZ:
+      case GST_JPEG2000_MARKER_SIZ:
 
         if (header->siz.n_components != 0) {
           GST_ERROR_OBJECT (self, "Multiple SIZ marker");
@@ -1495,7 +1466,7 @@ parse_main_header (GstJP2kDecimator * self, GstByteReader * reader,
         if (ret != GST_FLOW_OK)
           goto done;
         break;
-      case MARKER_COD:
+      case GST_JPEG2000_MARKER_COD:
         if (header->siz.n_components == 0) {
           GST_ERROR_OBJECT (self, "Require SIZ before COD");
           ret = GST_FLOW_ERROR;
@@ -1513,31 +1484,31 @@ parse_main_header (GstJP2kDecimator * self, GstByteReader * reader,
           goto done;
 
         break;
-      case MARKER_POC:
+      case GST_JPEG2000_MARKER_POC:
         GST_ERROR_OBJECT (self, "POC marker not supported yet");
         ret = GST_FLOW_ERROR;
         goto done;
-      case MARKER_COC:
+      case GST_JPEG2000_MARKER_COC:
         GST_ERROR_OBJECT (self, "COC marker not supported yet");
         ret = GST_FLOW_ERROR;
         goto done;
-      case MARKER_RGN:
+      case GST_JPEG2000_MARKER_RGN:
         GST_ERROR_OBJECT (self, "RGN marker not supported yet");
         ret = GST_FLOW_ERROR;
         goto done;
-      case MARKER_TLM:
+      case GST_JPEG2000_MARKER_TLM:
         GST_ERROR_OBJECT (self, "TLM marker not supported yet");
         ret = GST_FLOW_ERROR;
         goto done;
-      case MARKER_PLM:
+      case GST_JPEG2000_MARKER_PLM:
         GST_ERROR_OBJECT (self, "PLM marker not supported yet");
         ret = GST_FLOW_ERROR;
         goto done;
-      case MARKER_PPM:
+      case GST_JPEG2000_MARKER_PPM:
         GST_ERROR_OBJECT (self, "PPM marker not supported yet");
         ret = GST_FLOW_ERROR;
         goto done;
-      case MARKER_QCD:
+      case GST_JPEG2000_MARKER_QCD:
         if (header->qcd.data != NULL) {
           GST_ERROR_OBJECT (self, "Multiple QCD markers");
           ret = GST_FLOW_ERROR;
@@ -1547,7 +1518,7 @@ parse_main_header (GstJP2kDecimator * self, GstByteReader * reader,
         header->qcd.length = length - 2;
         gst_byte_reader_skip_unchecked (reader, length - 2);
         break;
-      case MARKER_QCC:{
+      case GST_JPEG2000_MARKER_QCC:{
         Buffer *p = g_slice_new (Buffer);
         p->data = gst_byte_reader_peek_data_unchecked (reader);
         p->length = length - 2;
@@ -1555,7 +1526,7 @@ parse_main_header (GstJP2kDecimator * self, GstByteReader * reader,
         gst_byte_reader_skip_unchecked (reader, length - 2);
         break;
       }
-      case MARKER_COM:{
+      case GST_JPEG2000_MARKER_COM:{
         Buffer *p = g_slice_new (Buffer);
         p->data = gst_byte_reader_peek_data_unchecked (reader);
         p->length = length - 2;
@@ -1563,7 +1534,7 @@ parse_main_header (GstJP2kDecimator * self, GstByteReader * reader,
         gst_byte_reader_skip_unchecked (reader, length - 2);
         break;
       }
-      case MARKER_CRG:{
+      case GST_JPEG2000_MARKER_CRG:{
         Buffer *p = g_slice_new (Buffer);
         p->data = gst_byte_reader_peek_data_unchecked (reader);
         p->length = length - 2;
@@ -1604,7 +1575,7 @@ parse_main_header (GstJP2kDecimator * self, GstByteReader * reader,
 
   /* now there must be the EOC marker */
   if (!gst_byte_reader_get_uint16_be (reader, &marker)
-      || marker != MARKER_EOC) {
+      || marker != GST_JPEG2000_MARKER_EOC) {
     GST_ERROR_OBJECT (self, "Frame does not end with EOC");
     ret = GST_FLOW_ERROR;
     goto done;
@@ -1695,7 +1666,7 @@ write_main_header (GstJP2kDecimator * self, GstByteWriter * writer,
     return GST_FLOW_ERROR;
   }
 
-  gst_byte_writer_put_uint16_be_unchecked (writer, MARKER_SOC);
+  gst_byte_writer_put_uint16_be_unchecked (writer, GST_JPEG2000_MARKER_SOC);
 
   ret = write_siz (self, writer, &header->siz);
   if (ret != GST_FLOW_OK)
@@ -1705,14 +1676,15 @@ write_main_header (GstJP2kDecimator * self, GstByteWriter * writer,
   if (ret != GST_FLOW_OK)
     goto done;
 
-  ret = write_marker_buffer (self, writer, MARKER_QCD, &header->qcd);
+  ret =
+      write_marker_buffer (self, writer, GST_JPEG2000_MARKER_QCD, &header->qcd);
   if (ret != GST_FLOW_OK)
     goto done;
 
   for (l = header->qcc; l; l = l->next) {
     Buffer *p = l->data;
 
-    ret = write_marker_buffer (self, writer, MARKER_QCC, p);
+    ret = write_marker_buffer (self, writer, GST_JPEG2000_MARKER_QCC, p);
     if (ret != GST_FLOW_OK)
       goto done;
   }
@@ -1720,7 +1692,7 @@ write_main_header (GstJP2kDecimator * self, GstByteWriter * writer,
   for (l = header->crg; l; l = l->next) {
     Buffer *p = l->data;
 
-    ret = write_marker_buffer (self, writer, MARKER_CRG, p);
+    ret = write_marker_buffer (self, writer, GST_JPEG2000_MARKER_CRG, p);
     if (ret != GST_FLOW_OK)
       goto done;
   }
@@ -1728,7 +1700,7 @@ write_main_header (GstJP2kDecimator * self, GstByteWriter * writer,
   for (l = header->com; l; l = l->next) {
     Buffer *p = l->data;
 
-    ret = write_marker_buffer (self, writer, MARKER_COM, p);
+    ret = write_marker_buffer (self, writer, GST_JPEG2000_MARKER_COM, p);
     if (ret != GST_FLOW_OK)
       goto done;
   }
@@ -1744,7 +1716,7 @@ write_main_header (GstJP2kDecimator * self, GstByteWriter * writer,
     ret = GST_FLOW_ERROR;
     goto done;
   }
-  gst_byte_writer_put_uint16_be_unchecked (writer, MARKER_EOC);
+  gst_byte_writer_put_uint16_be_unchecked (writer, GST_JPEG2000_MARKER_EOC);
 
 done:
   return ret;

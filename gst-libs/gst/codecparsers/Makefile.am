@@ -18,6 +18,7 @@ libgstcodecparsers_@GST_API_VERSION@include_HEADERS = \
 	gstmpegvideoparser.h gsth264parser.h gstvc1parser.h gstmpeg4parser.h \
 	gsth265parser.h gstvp8parser.h gstvp8rangedecoder.h \
 	gstjpegparser.h \
+	gstjpeg2000.h \
 	gstmpegvideometa.h \
 	gstjpeg2000sampling.h \
 	gstvp9parser.h

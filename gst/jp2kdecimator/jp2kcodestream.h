@@ -25,6 +25,7 @@
 #include <gst/base/gstbytereader.h>
 #include <gst/base/gstbitreader.h>
 #include <gst/base/gstbytewriter.h>
+#include <gst/codecparsers/gstjpeg2000.h>
 
 #include "gstjp2kdecimator.h"
 
@@ -64,21 +65,6 @@ typedef struct
   guint32 xto, yto;             /* tile origin */
 } ImageSize;
 
-/* Progression orders
- * L - layer
- * R - resolution/decomposition level
- * C - component
- * P - position/precinct
- */
-typedef enum
-{
-  PROGRESSION_ORDER_LRCP = 0,
-  PROGRESSION_ORDER_RLCP,
-  PROGRESSION_ORDER_RPCL,
-  PROGRESSION_ORDER_PCRL,
-  PROGRESSION_ORDER_CPRL,
-  PROGRESSION_ORDER_MAX
-} ProgressionOrder;
 
 /* COD */
 typedef struct
@@ -86,7 +72,7 @@ typedef struct
   /* Scod */
   gboolean sop, eph;
   /* SGcod */
-  ProgressionOrder progression_order;
+  GstJPEG2000ProgressionOrder progression_order;
   guint16 n_layers;
   guint8 multi_component_transform;
   /* SPcod */

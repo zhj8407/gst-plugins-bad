@@ -4,7 +4,7 @@ libgstjp2kdecimator_la_SOURCES = \
 	gstjp2kdecimator.c \
 	jp2kcodestream.c
 
-libgstjp2kdecimator_la_CFLAGS = \
+libgstjp2kdecimator_la_CFLAGS = $(GST_PLUGINS_BAD_CFLAGS) \
     $(GST_CFLAGS)
 libgstjp2kdecimator_la_LIBADD = \
     $(GST_LIBS) $(GST_BASE_LIBS)
