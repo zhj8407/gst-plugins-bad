@@ -84,13 +84,11 @@
 
 #include "tsmuxcommon.h"
 
-G_BEGIN_DECLS
-
-typedef enum TsMuxStreamType TsMuxStreamType;
+G_BEGIN_DECLS typedef enum TsMuxStreamType TsMuxStreamType;
 typedef enum TsMuxStreamState TsMuxStreamState;
 typedef struct TsMuxStreamBuffer TsMuxStreamBuffer;
 
-typedef void (*TsMuxStreamBufferReleaseFunc) (guint8 *data, void *user_data);
+typedef void (*TsMuxStreamBufferReleaseFunc) (guint8 * data, void *user_data);
 
 /* Stream type assignments
  *
@@ -117,45 +115,49 @@ typedef void (*TsMuxStreamBufferReleaseFunc) (guint8 *data, void *user_data);
  * 0x0F-0x7F ITU-T Rec. H.222.0 | ISO/IEC 13818-1 Reserved
  * 0x80-0xFF User Private
  */
-enum TsMuxStreamType {
-  TSMUX_ST_RESERVED                   = 0x00,
-  TSMUX_ST_VIDEO_MPEG1                = 0x01,
-  TSMUX_ST_VIDEO_MPEG2                = 0x02,
-  TSMUX_ST_AUDIO_MPEG1                = 0x03,
-  TSMUX_ST_AUDIO_MPEG2                = 0x04,
-  TSMUX_ST_PRIVATE_SECTIONS           = 0x05,
-  TSMUX_ST_PRIVATE_DATA               = 0x06,
-  TSMUX_ST_MHEG                       = 0x07,
-  TSMUX_ST_DSMCC                      = 0x08,
-  TSMUX_ST_H222_1                     = 0x09,
+enum TsMuxStreamType
+{
+  TSMUX_ST_RESERVED = 0x00,
+  TSMUX_ST_VIDEO_MPEG1 = 0x01,
+  TSMUX_ST_VIDEO_MPEG2 = 0x02,
+  TSMUX_ST_AUDIO_MPEG1 = 0x03,
+  TSMUX_ST_AUDIO_MPEG2 = 0x04,
+  TSMUX_ST_PRIVATE_SECTIONS = 0x05,
+  TSMUX_ST_PRIVATE_DATA = 0x06,
+  TSMUX_ST_MHEG = 0x07,
+  TSMUX_ST_DSMCC = 0x08,
+  TSMUX_ST_H222_1 = 0x09,
 
   /* later extensions */
-  TSMUX_ST_AUDIO_AAC                  = 0x0f,
-  TSMUX_ST_VIDEO_MPEG4                = 0x10,
-  TSMUX_ST_VIDEO_H264                 = 0x1b,
-  TSMUX_ST_VIDEO_HEVC                 = 0x24,
+  TSMUX_ST_AUDIO_AAC = 0x0f,
+  TSMUX_ST_VIDEO_MPEG4 = 0x10,
+  TSMUX_ST_VIDEO_H264 = 0x1b,
+  TSMUX_ST_VIDEO_HEVC = 0x24,
+  TSMUX_ST_VIDEO_JP2K = 0x21,
 
   /* private stream types */
-  TSMUX_ST_PS_AUDIO_AC3               = 0x81,
-  TSMUX_ST_PS_AUDIO_DTS               = 0x8a,
-  TSMUX_ST_PS_AUDIO_LPCM              = 0x8b,
-  TSMUX_ST_PS_DVB_SUBPICTURE          = 0x8c,
-  TSMUX_ST_PS_TELETEXT                = 0x8d,
-  TSMUX_ST_PS_KLV                     = 0x8e,    /* only used internally */
-  TSMUX_ST_PS_OPUS                    = 0x8f,    /* only used internally */
-  TSMUX_ST_PS_DVD_SUBPICTURE          = 0xff,
+  TSMUX_ST_PS_AUDIO_AC3 = 0x81,
+  TSMUX_ST_PS_AUDIO_DTS = 0x8a,
+  TSMUX_ST_PS_AUDIO_LPCM = 0x8b,
+  TSMUX_ST_PS_DVB_SUBPICTURE = 0x8c,
+  TSMUX_ST_PS_TELETEXT = 0x8d,
+  TSMUX_ST_PS_KLV = 0x8e,       /* only used internally */
+  TSMUX_ST_PS_OPUS = 0x8f,      /* only used internally */
+  TSMUX_ST_PS_DVD_SUBPICTURE = 0xff,
 
   /* Non-standard definitions */
-  TSMUX_ST_VIDEO_DIRAC                = 0xD1
+  TSMUX_ST_VIDEO_DIRAC = 0xD1
 };
 
-enum TsMuxStreamState {
-    TSMUX_STREAM_STATE_HEADER,
-    TSMUX_STREAM_STATE_PACKET
+enum TsMuxStreamState
+{
+  TSMUX_STREAM_STATE_HEADER,
+  TSMUX_STREAM_STATE_PACKET
 };
 
 /* TsMuxStream receives elementary streams for parsing */
-struct TsMuxStream {
+struct TsMuxStream
+{
   TsMuxStreamState state;
   TsMuxPacketInfo pi;
   TsMuxStreamType stream_type;
@@ -197,7 +199,7 @@ struct TsMuxStream {
   gint64 last_pts;
 
   /* count of programs using this as PCR */
-  gint   pcr_ref;
+  gint pcr_ref;
   /* last time PCR written */
   gint64 last_pcr;
 
@@ -216,37 +218,48 @@ struct TsMuxStream {
   /* Opus */
   gboolean is_opus;
   guint8 opus_channel_config_code;
+
+  /* Jpeg2000 */
+  gint32 horizontal_size;
+  gint32 vertical_size;
+  gint32 den;
+  gint32 num;
+  /* Maximum bitrate box */
+  guint32 max_bitrate;
+  guint16 profile_and_level;
+  gboolean interlace_mode;
+  guint8 color_spec;
+
 };
 
 /* stream management */
-TsMuxStream *	tsmux_stream_new 		(guint16 pid, TsMuxStreamType stream_type);
-void 		tsmux_stream_free 		(TsMuxStream *stream);
+TsMuxStream *tsmux_stream_new (guint16 pid, TsMuxStreamType stream_type);
+void tsmux_stream_free (TsMuxStream * stream);
 
-guint16         tsmux_stream_get_pid            (TsMuxStream *stream);
+guint16 tsmux_stream_get_pid (TsMuxStream * stream);
 
-void 		tsmux_stream_set_buffer_release_func 	(TsMuxStream *stream, 
-       							 TsMuxStreamBufferReleaseFunc func);
+void tsmux_stream_set_buffer_release_func (TsMuxStream * stream,
+    TsMuxStreamBufferReleaseFunc func);
 
 /* Add a new buffer to the pool of available bytes. If pts or dts are not -1, they
  * indicate the PTS or DTS of the first access unit within this packet */
-void 		tsmux_stream_add_data 		(TsMuxStream *stream, guint8 *data, guint len, 
-       						 void *user_data, gint64 pts, gint64 dts,
-                                                 gboolean random_access);
+void tsmux_stream_add_data (TsMuxStream * stream, guint8 * data, guint len,
+    void *user_data, gint64 pts, gint64 dts, gboolean random_access);
 
-void 		tsmux_stream_pcr_ref 		(TsMuxStream *stream);
-void 		tsmux_stream_pcr_unref  	(TsMuxStream *stream);
-gboolean	tsmux_stream_is_pcr 		(TsMuxStream *stream);
+void tsmux_stream_pcr_ref (TsMuxStream * stream);
+void tsmux_stream_pcr_unref (TsMuxStream * stream);
+gboolean tsmux_stream_is_pcr (TsMuxStream * stream);
 
-gboolean 	tsmux_stream_at_pes_start 	(TsMuxStream *stream);
-void 		tsmux_stream_get_es_descrs 	(TsMuxStream *stream, GstMpegtsPMTStream *pmt_stream);
+gboolean tsmux_stream_at_pes_start (TsMuxStream * stream);
+void tsmux_stream_get_es_descrs (TsMuxStream * stream,
+    GstMpegtsPMTStream * pmt_stream);
 
-gint 		tsmux_stream_bytes_in_buffer 	(TsMuxStream *stream);
-gint 		tsmux_stream_bytes_avail 	(TsMuxStream *stream);
-gboolean 	tsmux_stream_initialize_pes_packet (TsMuxStream *stream);
-gboolean 	tsmux_stream_get_data 		(TsMuxStream *stream, guint8 *buf, guint len);
+gint tsmux_stream_bytes_in_buffer (TsMuxStream * stream);
+gint tsmux_stream_bytes_avail (TsMuxStream * stream);
+gboolean tsmux_stream_initialize_pes_packet (TsMuxStream * stream);
+gboolean tsmux_stream_get_data (TsMuxStream * stream, guint8 * buf, guint len);
 
-guint64 	tsmux_stream_get_pts 		(TsMuxStream *stream);
+guint64 tsmux_stream_get_pts (TsMuxStream * stream);
 
 G_END_DECLS
-
 #endif

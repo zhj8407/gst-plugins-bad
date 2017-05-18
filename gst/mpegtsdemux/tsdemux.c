@@ -48,6 +48,7 @@
 #include "pesparse.h"
 #include <gst/codecparsers/gsth264parser.h>
 #include <gst/codecparsers/gstmpegvideoparser.h>
+#include <gst/video/video-color.h>
 
 #include <math.h>
 
@@ -112,6 +113,7 @@ typedef struct
 typedef struct _TSDemuxStream TSDemuxStream;
 
 typedef struct _TSDemuxH264ParsingInfos TSDemuxH264ParsingInfos;
+typedef struct _TSDemuxJP2KParsingInfos TSDemuxJP2KParsingInfos;
 
 /* Returns TRUE if a keyframe was found */
 typedef gboolean (*GstTsDemuxKeyFrameScanFunction) (TSDemuxStream * stream,
@@ -132,6 +134,13 @@ struct _TSDemuxH264ParsingInfos
   GstByteWriter *sei;
   SimpleBuffer framedata;
 };
+
+struct _TSDemuxJP2KParsingInfos
+{
+  /* J2K parsing data */
+  gboolean interlace;
+};
+
 
 struct _TSDemuxStream
 {
@@ -200,6 +209,7 @@ struct _TSDemuxStream
 
   GstTsDemuxKeyFrameScanFunction scan_function;
   TSDemuxH264ParsingInfos h264infos;
+  TSDemuxJP2KParsingInfos jp2kInfos;
 };
 
 #define VIDEO_CAPS \
@@ -215,8 +225,9 @@ struct _TSDemuxStream
     "video/x-cavs;" \
     "video/x-wmv," \
       "wmvversion = (int) 3, " \
-      "format = (string) WVC1" \
-  )
+      "format = (string) WVC1;" \
+      "image/x-jpc;" \
+)
 
 #define AUDIO_CAPS \
   GST_STATIC_CAPS ( \
@@ -1449,6 +1460,94 @@ create_pad_for_stream (MpegTSBase * base, MpegTSBaseStream * bstream,
           "stream-format", G_TYPE_STRING, "byte-stream",
           "alignment", G_TYPE_STRING, "nal", NULL);
       break;
+    case GST_MPEGTS_STREAM_TYPE_VIDEO_JP2K:
+      is_video = TRUE;
+      desc =
+          mpegts_get_descriptor_from_stream (bstream, GST_MTS_DESC_J2K_VIDEO);
+      if (desc == NULL) {
+        caps = gst_caps_new_empty_simple ("image/x-jpc");
+        break;
+      } else {
+        GstByteReader br;
+        guint16 DEN_frame_rate = 0;
+        guint16 NUM_frame_rate = 0;
+        guint8 color_specification = 0;
+        guint8 remaining_8b = 0;
+        gboolean interlaced_video = 0;
+        const gchar *interlace_mode = NULL;
+        const gchar *colorspace = NULL;
+        const gchar *colorimetry_mode = NULL;
+        guint16 profile_and_level = 0;
+        guint32 horizontal_size = 0;
+        guint32 vertical_size = 0;
+        guint32 max_bit_rate = 0;
+        guint32 max_buffer_size = 0;
+
+        /* Skip the descpriptor tag and length */
+        gst_byte_reader_init (&br, desc->data + 2, desc->length);
+
+        profile_and_level = gst_byte_reader_get_uint16_be_unchecked (&br);
+        horizontal_size = gst_byte_reader_get_uint32_be_unchecked (&br);
+        vertical_size = gst_byte_reader_get_uint32_be_unchecked (&br);
+        max_bit_rate = gst_byte_reader_get_uint32_be_unchecked (&br);
+        max_buffer_size = gst_byte_reader_get_uint32_be_unchecked (&br);
+        DEN_frame_rate = gst_byte_reader_get_uint16_be_unchecked (&br);
+        NUM_frame_rate = gst_byte_reader_get_uint16_be_unchecked (&br);
+        color_specification = gst_byte_reader_get_uint8_unchecked (&br);
+
+        /* unused variables */
+        (void) profile_and_level;
+        (void) horizontal_size;
+        (void) vertical_size;
+        (void) max_bit_rate;
+        (void) max_buffer_size;
+
+        remaining_8b = gst_byte_reader_get_uint8_unchecked (&br);
+        /* gboolean still_mode = remaining_8b & 0x80; */
+        interlaced_video = remaining_8b & 0x40;
+        /* guint8 reserved = remaining_8b; */
+
+        if (interlaced_video) {
+          interlace_mode = "interleaved";
+          stream->jp2kInfos.interlace = TRUE;
+        } else {
+          interlace_mode = "progressive";
+          stream->jp2kInfos.interlace = FALSE;
+        }
+
+        switch (color_specification) {
+          case 1:
+            colorspace = "sRGB";
+            colorimetry_mode = GST_VIDEO_COLORIMETRY_SRGB;
+            break;
+
+          case 2:
+            colorspace = "sYUV";
+            colorimetry_mode = GST_VIDEO_COLORIMETRY_BT601;
+            break;
+
+          case 3:
+            colorspace = "sYUV";
+            colorimetry_mode = GST_VIDEO_COLORIMETRY_BT709;
+            break;
+
+            /* CIE-LUV */
+          case 4:
+            colorspace = "sYUV";
+            colorimetry_mode = GST_VIDEO_COLORIMETRY_BT709;
+            break;
+          default:
+            colorspace = "";
+            colorimetry_mode = "";
+        }
+
+        caps = gst_caps_new_simple ("image/x-jpc",
+            "framerate", GST_TYPE_FRACTION, NUM_frame_rate, DEN_frame_rate,
+            "interlace-mode", G_TYPE_STRING, interlace_mode,
+            "colorimetry", G_TYPE_STRING, colorimetry_mode,
+            "colorspace", G_TYPE_STRING, colorspace, NULL);
+      }
+      break;
     case ST_VIDEO_DIRAC:
       if (bstream->registration_id == 0x64726163) {
         GST_LOG ("dirac");
@@ -2558,6 +2657,206 @@ error:
   }
 }
 
+static GstBufferList *
+parse_jp2k_access_unit (TSDemuxStream * stream)
+{
+  GstByteReader reader;
+  GstBufferList *buffer_list = NULL;
+
+
+  /* header tag */
+  guint32 header_tag;
+
+  GstBuffer *buffer = NULL;
+  /* Framerate box */
+  guint16 den = 0;
+  guint16 num = 0;
+  /* Maximum bitrate box */
+  guint32 MaxBr = 0;
+  guint32 AUF[2] = { 0, 0 };
+  /* Field Coding Box */
+  guint8 Fic = 1;
+  guint8 Fio = 0;
+  /* Time Code box */
+  guint32 HHMMSSFF = 0;
+  /* Broadcast color box */
+  guint8 CollC = 0;
+  guint8 b;
+
+  guint8 *packet_data = NULL;
+  guint packet_size;
+
+  int remaining = 0;
+
+  GstMapInfo map_info;
+
+  buffer_list = gst_buffer_list_new ();
+  gst_byte_reader_init (&reader, stream->data, stream->current_size);
+
+  /* Elementary stream header box 'elsm' == 0x656c736d */
+  if (!gst_byte_reader_get_uint32_be (&reader, &header_tag)) {
+    GST_ERROR_OBJECT (stream->pad,
+        "Unable to read elementary stream header box");
+    goto error;
+  }
+  if (header_tag != 0x656c736d) {
+    GST_ERROR_OBJECT (stream->pad, "Expected ELSM box but found box %x instead",
+        header_tag);
+    goto error;
+  }
+  /* Frame rate box 'frat' == 0x66726174 */
+  if (!gst_byte_reader_get_uint32_be (&reader, &header_tag)) {
+    GST_ERROR_OBJECT (stream->pad, "Unable to read frat tag");
+    goto error;
+  }
+  if (header_tag != 0x66726174) {
+    GST_ERROR_OBJECT (stream->pad,
+        "Expected frame rate box, but found box %x instead", header_tag);
+    goto error;
+
+  }
+  if (!gst_byte_reader_get_uint16_be (&reader, &den)) {
+    GST_ERROR_OBJECT (stream->pad, "Unable to read den tag");
+    goto error;
+  }
+  if (!gst_byte_reader_get_uint16_be (&reader, &num)) {
+    GST_ERROR_OBJECT (stream->pad, "Unable to read num tag");
+    goto error;
+  }
+  /* Maximum bit rate box 'brat' == 0x62726174 */
+  if (!gst_byte_reader_get_uint32_be (&reader, &header_tag)) {
+    GST_ERROR_OBJECT (stream->pad, "Unable to read brat box");
+    goto error;
+  }
+  if (header_tag != 0x62726174) {
+    GST_ERROR_OBJECT (stream->pad, "Expected brat box but read box %x instead",
+        header_tag);
+    goto error;
+
+  }
+  if (!gst_byte_reader_get_uint32_be (&reader, &MaxBr)) {
+    GST_ERROR_OBJECT (stream->pad, "Unable to read max bit rate tag");
+    goto error;
+  }
+  if (!gst_byte_reader_get_uint32_be (&reader, &AUF[0])) {
+    GST_ERROR_OBJECT (stream->pad, "Unable to read AUF[0] tag");
+    goto error;
+  }
+
+  if (stream->jp2kInfos.interlace) {
+    if (!gst_byte_reader_get_uint32_be (&reader, &AUF[1])) {
+      GST_ERROR_OBJECT (stream->pad, "Unable to read AUF[1] tag");
+      goto error;
+    }
+    /*  Field Coding Box 'fiel' == 0x6669656c */
+    if (!gst_byte_reader_get_uint32_be (&reader, &header_tag)) {
+      GST_ERROR_OBJECT (stream->pad,
+          "Unable to read field coding box (for interlaced mode)");
+      goto error;
+    }
+    if (header_tag != 0x6669656c) {
+      GST_ERROR_OBJECT (stream->pad,
+          "Expected Field Coding box but found box %x instead", header_tag);
+      goto error;
+    }
+    if (!gst_byte_reader_get_uint8 (&reader, &Fic)) {
+      GST_ERROR_OBJECT (stream->pad, "Unable to read Fic tag");
+      goto error;
+    }
+
+    if (!gst_byte_reader_get_uint8 (&reader, &Fio)) {
+      GST_ERROR_OBJECT (stream->pad, "Unable to read Fio tag");
+      goto error;
+    }
+
+  }
+  /* Time Code Box 'tcod' == 0x74636f64 */
+  if (!gst_byte_reader_get_uint32_be (&reader, &header_tag)) {
+    GST_ERROR_OBJECT (stream->pad, "Unable to read Time code box");
+    goto error;
+  }
+
+  if (header_tag != 0x74636f64) {
+    GST_ERROR_OBJECT (stream->pad,
+        "Expected Time code box but found %d box instead", header_tag);
+    goto error;
+  }
+  if (!gst_byte_reader_get_uint32_be (&reader, &HHMMSSFF)) {
+    GST_ERROR_OBJECT (stream->pad, "Unable to read HHMMSSFF tag");
+    goto error;
+  }
+  /* Broadcast Color Box 'bcol' == 0x6263686c */
+  if (!gst_byte_reader_get_uint32_be (&reader, &header_tag)) {
+    GST_ERROR_OBJECT (stream->pad, "Unable to read Broadcast color box");
+    goto error;
+  }
+
+  if (header_tag != 0x62636f6c) {
+    GST_ERROR_OBJECT (stream->pad,
+        "Expected Broadcast color box but found %x box instead", header_tag);
+    goto error;
+  }
+  if (!gst_byte_reader_get_uint8 (&reader, &CollC)) {
+    GST_ERROR_OBJECT (stream->pad, "Unable to read color space tag");
+    goto error;
+  }
+  /* Get reserved 8-bits */
+  if (!gst_byte_reader_get_uint8 (&reader, &b)) {
+    GST_ERROR_OBJECT (stream->pad, "Unable to read reserved 8 bits");
+    goto error;
+  }
+
+  remaining = gst_byte_reader_get_remaining (&reader);
+  packet_size = remaining;
+
+  GST_DEBUG_OBJECT (stream->pad,
+      "Size of first codestream in TS stream: %d remaining: %d", AUF[0],
+      remaining);
+
+  if (!gst_byte_reader_dup_data (&reader, remaining, &packet_data)) {
+    GST_ERROR ("Required size %d > %d than remaining size in buffer", AUF[0],
+        remaining);
+    goto error;
+  }
+
+  buffer = gst_buffer_new_wrapped (packet_data, packet_size);
+  gst_buffer_list_add (buffer_list, buffer);
+
+
+  gst_buffer_map (buffer, &map_info, GST_MAP_READ);
+
+  /* TODO: add support for interlace
+     if (stream->jp2kInfos.interlace) {
+     remaining = gst_byte_reader_get_remaining(&reader);
+
+     if(!gst_byte_reader_dup_data (&reader, AUF[1], &packet_data))     {
+     GST_ERROR("Required size %d > %d than remaining size in buffer", AUF[1], remaining);
+     goto error;
+     }
+
+     buffer = gst_buffer_new_wrapped (packet_data, packet_size);
+     gst_buffer_list_add (buffer_list, buffer);
+     }
+   */
+
+  g_free (stream->data);
+  stream->data = NULL;
+  stream->current_size = 0;
+
+  return buffer_list;
+
+error:
+  {
+    GST_ERROR ("Failed to parse JP2K access unit");
+    g_free (stream->data);
+    stream->data = NULL;
+    stream->current_size = 0;
+    gst_buffer_list_unref (buffer_list);
+    return NULL;
+  }
+}
+
+
 static GstFlowReturn
 gst_ts_demux_push_pending_data (GstTSDemux * demux, TSDemuxStream * stream,
     MpegTSBaseProgram * target_program)
@@ -2615,6 +2914,18 @@ gst_ts_demux_push_pending_data (GstTSDemux * demux, TSDemuxStream * stream,
           gst_buffer_list_unref (buffer_list);
           buffer_list = NULL;
         }
+      } else if (bs->stream_type == GST_MPEGTS_STREAM_TYPE_VIDEO_JP2K) {
+        buffer_list = parse_jp2k_access_unit (stream);
+        if (!buffer_list) {
+          res = GST_FLOW_ERROR;
+          goto beach;
+        }
+
+        if (gst_buffer_list_length (buffer_list) == 1) {
+          buffer = gst_buffer_ref (gst_buffer_list_get (buffer_list, 0));
+          gst_buffer_list_unref (buffer_list);
+          buffer_list = NULL;
+        }
       } else {
         buffer = gst_buffer_new_wrapped (stream->data, stream->current_size);
       }
@@ -2639,6 +2950,18 @@ gst_ts_demux_push_pending_data (GstTSDemux * demux, TSDemuxStream * stream,
     if (bs->stream_type == GST_MPEGTS_STREAM_TYPE_PRIVATE_PES_PACKETS &&
         bs->registration_id == DRF_ID_OPUS) {
       buffer_list = parse_opus_access_unit (stream);
+      if (!buffer_list) {
+        res = GST_FLOW_ERROR;
+        goto beach;
+      }
+
+      if (gst_buffer_list_length (buffer_list) == 1) {
+        buffer = gst_buffer_ref (gst_buffer_list_get (buffer_list, 0));
+        gst_buffer_list_unref (buffer_list);
+        buffer_list = NULL;
+      }
+    } else if (bs->stream_type == GST_MPEGTS_STREAM_TYPE_VIDEO_JP2K) {
+      buffer_list = parse_jp2k_access_unit (stream);
       if (!buffer_list) {
         res = GST_FLOW_ERROR;
         goto beach;

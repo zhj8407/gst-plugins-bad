@@ -98,6 +98,9 @@
 #include "mpegtsmux_aac.h"
 #include "mpegtsmux_ttxt.h"
 #include "mpegtsmux_opus.h"
+#include "mpegtsmux_jpeg2000.h"
+#include <gst/videoparsers/gstjpeg2000parse.h>
+#include <gst/video/video-color.h>
 
 GST_DEBUG_CATEGORY (mpegtsmux_debug);
 #define GST_CAT_DEFAULT mpegtsmux_debug
@@ -125,6 +128,7 @@ static GstStaticPadTemplate mpegtsmux_sink_factory =
         "mpegversion = (int) { 1, 2, 4 }, "
         "systemstream = (boolean) false; "
         "video/x-dirac;"
+        "image/x-jpc;"
         "video/x-h264,stream-format=(string)byte-stream,"
         "alignment=(string){au, nal}; "
         "video/x-h265,stream-format=(string)byte-stream,"
@@ -149,7 +153,8 @@ static GstStaticPadTemplate mpegtsmux_sink_factory =
         "audio/x-opus, "
         "channels = (int) [1, 8], "
         "channel-mapping-family = (int) {0, 1};"
-        "subpicture/x-dvb; application/x-teletext; meta/x-klv, parsed=true"));
+        "subpicture/x-dvb; application/x-teletext; meta/x-klv, parsed=true;"
+        "image/x-jpc;"));
 
 static GstStaticPadTemplate mpegtsmux_src_factory =
 GST_STATIC_PAD_TEMPLATE ("src",
@@ -588,6 +593,10 @@ mpegtsmux_create_stream (MpegTsMux * mux, MpegTsPadData * ts_data)
   const GValue *value = NULL;
   GstBuffer *codec_data = NULL;
   guint8 opus_channel_config_code = 0;
+  guint16 profile = 0;
+  guint8 main_level = 0;
+  guint32 max_rate = 0;
+  guint8 color_spec = 0;
 
   pad = ts_data->collect.pad;
   caps = gst_pad_get_current_caps (pad);
@@ -739,6 +748,139 @@ mpegtsmux_create_stream (MpegTsMux * mux, MpegTsPadData * ts_data)
     ts_data->prepare_func = mpegtsmux_prepare_opus;
   } else if (strcmp (mt, "meta/x-klv") == 0) {
     st = TSMUX_ST_PS_KLV;
+  } else if (strcmp (mt, "image/x-jpc") == 0) {
+    const GValue *vProfile = gst_structure_get_value (s, "profile");
+    const GValue *vMainlevel = gst_structure_get_value (s, "main-level");
+    const GValue *vFramerate = gst_structure_get_value (s, "framerate");
+    const GValue *vInterlace = gst_structure_get_value (s, "interlace-mode");
+    const GValue *vColorimetry = gst_structure_get_value (s, "colorimetry");
+    GstMapInfo map_info;
+    j2k_private_data *map_data_p = NULL;
+    GstMemory *private_data =
+        gst_allocator_alloc (NULL, sizeof (j2k_private_data), NULL);
+
+    if (!gst_memory_map (private_data, &map_info, GST_MAP_WRITE)) {
+      /* Free prepare data memory object */
+      GstAllocator *default_allocator =
+          gst_allocator_find (GST_ALLOCATOR_SYSMEM);
+      gst_allocator_free (default_allocator, private_data);
+      gst_object_unref (default_allocator);
+      GST_ERROR_OBJECT (pad, "Unable to map memory");
+      goto not_negotiated;
+    }
+
+    if (vProfile) {
+      profile = g_value_get_uint (vProfile);
+      if (profile != GST_JPEG2000_PARSE_PROFILE_BC_SINGLE) {
+        /*GST_ERROR_OBJECT (pad, "Invalid JPEG 2000 profile %d", profile);
+           goto not_negotiated; */
+      }
+    } else {
+      GST_ERROR_OBJECT (pad, "Missing JPEG 2000 profile");
+      goto not_negotiated;
+    }
+
+    if (vMainlevel) {
+      main_level = g_value_get_uint (vMainlevel);
+      if (main_level > 11) {
+        GST_ERROR_OBJECT (pad, "Invalid main level %d", main_level);
+        goto not_negotiated;
+      }
+      if (main_level >= 6) {
+        max_rate = 2 ^ (main_level - 6) * 1600 * 1000000;
+      } else {
+        switch (main_level) {
+          case 0:
+            max_rate = 0;
+            break;
+          case 1:
+            max_rate = 200 * 1000000;
+            break;
+          case 2:
+            max_rate = 200 * 1000000;
+            break;
+          case 3:
+            max_rate = 200 * 1000000;
+            break;
+          case 4:
+            max_rate = 400 * 1000000;
+            break;
+          case 5:
+            max_rate = 800 * 1000000;
+            break;
+          default:
+            break;
+        }
+      }
+    } else {
+      /*GST_ERROR_OBJECT (pad, "Missing main level");
+         goto not_negotiated; */
+    }
+
+    map_data_p = (j2k_private_data *) map_info.data;
+
+    map_data_p->interlace = FALSE;      /* will be set later. TODO: interlace video mode doesn't work yet */
+    map_data_p->den = 0;        /* will be set later */
+    map_data_p->num = 0;        /* will be set later */
+    map_data_p->max_bitrate = max_rate;
+    map_data_p->Fic = 1;        /* TODO: get from caps */
+    map_data_p->Fio = 0;        /* TODO: get from caps */
+    map_data_p->color_spec = 1; /* will be set later */
+
+    /* Get Framerate */
+    if (vFramerate != NULL) {
+      /* Data for ELSM header */
+      map_data_p->num = gst_value_get_fraction_numerator (vFramerate);
+      map_data_p->den = gst_value_get_fraction_denominator (vFramerate);
+    }
+    /* Get Interlace-mode */
+    if (vInterlace) {
+      const char *interlace_mode = g_value_get_string (vInterlace);
+      if (g_str_equal (interlace_mode, "interleaved")) {
+        /* Data for ELSM header */
+        map_data_p->interlace = TRUE;
+      } else if (g_str_equal (interlace_mode, "progressive")) {
+        /* Data for ELSM header */
+        map_data_p->interlace = FALSE;
+      } else {
+        map_data_p->interlace = FALSE;
+      }
+    }
+    /* currently do not support interlaced video */
+    if (map_data_p->interlace) {
+      GST_ERROR_OBJECT (pad, "Interlaced video not supported");
+      goto not_negotiated;
+    }
+    /* Get Colorimetry */
+    if (vColorimetry) {
+      const char *colorimetry = g_value_get_string (vColorimetry);
+      if (g_str_equal (colorimetry, GST_VIDEO_COLORIMETRY_BT601)) {
+        color_spec = 2;
+      } else {
+        if (g_str_equal (colorimetry, GST_VIDEO_COLORIMETRY_BT709)
+            || g_str_equal (colorimetry, GST_VIDEO_COLORIMETRY_SMPTE240M)) {
+          color_spec = 3;
+        } else {
+          color_spec = 1;       /* RGB as default */
+        }
+      }
+      map_data_p->color_spec = color_spec;
+    } else {
+      /* release memory for private_data */
+      GstAllocator *default_allocator =
+          gst_allocator_find (GST_ALLOCATOR_SYSMEM);
+      gst_allocator_free (default_allocator, private_data);
+      gst_object_unref (default_allocator);
+      GST_ERROR_OBJECT (pad, "Colorimetry not present in caps");
+      goto not_negotiated;
+    }
+
+    gst_memory_unmap (private_data, &map_info);
+
+    st = TSMUX_ST_VIDEO_JP2K;
+    ts_data->prepare_func = mpegtsmux_prepare_jpeg2000;
+    ts_data->prepare_data = private_data;
+    ts_data->free_func = mpegtsmux_free_jpeg2000;
   }
 
   if (st != TSMUX_ST_RESERVED) {
@@ -749,9 +891,32 @@ mpegtsmux_create_stream (MpegTsMux * mux, MpegTsPadData * ts_data)
   }
 
   if (ts_data->stream != NULL) {
+    const char *interlace_mode = gst_structure_get_string (s, "interlace-mode");
     gst_structure_get_int (s, "rate", &ts_data->stream->audio_sampling);
     gst_structure_get_int (s, "channels", &ts_data->stream->audio_channels);
     gst_structure_get_int (s, "bitrate", &ts_data->stream->audio_bitrate);
+
+    /* frame rate */
+    gst_structure_get_fraction (s, "framerate", &ts_data->stream->num,
+        &ts_data->stream->den);
+
+    /* Interlace mode */
+    ts_data->stream->interlace_mode = FALSE;
+    if (interlace_mode) {
+      if (g_str_equal (interlace_mode, "interleaved"))
+        ts_data->stream->interlace_mode = TRUE;
+      else if (g_str_equal (interlace_mode, "progressive"))
+        ts_data->stream->interlace_mode = FALSE;
+    }
+
+
+    /* Width and Height */
+    gst_structure_get_int (s, "width", &ts_data->stream->horizontal_size);
+    gst_structure_get_int (s, "height", &ts_data->stream->vertical_size);
+
+    ts_data->stream->color_spec = color_spec;
+    ts_data->stream->max_bitrate = max_rate;
+    ts_data->stream->profile_and_level = profile | main_level;
 
     ts_data->stream->opus_channel_config_code = opus_channel_config_code;
 
