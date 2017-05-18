@@ -24,6 +24,7 @@
 
 #include "gstjpeg2000parse.h"
 #include <gst/base/base.h>
+#include <gst/video/video-color.h>
 
 /* Not used at the moment
 static gboolean gst_jpeg2000_parse_is_cinema(guint16 rsiz)   {
@@ -284,6 +285,8 @@ gst_jpeg2000_parse_handle_frame (GstBaseParse * parse,
   guint eoc_offset = 0;
   GstCaps *current_caps = NULL;
   GstStructure *current_caps_struct = NULL;
+  const gchar *colorimetry_string = NULL;
+  const gchar *interlace_string = NULL;
   GstJPEG2000Colorspace colorspace = GST_JPEG2000_COLORSPACE_NONE;
   guint x0, y0, x1, y1;
   guint width = 0, height = 0;
@@ -671,7 +674,32 @@ gst_jpeg2000_parse_handle_frame (GstBaseParse * parse,
       }
     }
 
+
     if (current_caps_struct) {
+
+      colorimetry_string = gst_structure_get_string
+          (current_caps_struct, "colorimetry");
+      if (colorimetry_string) {
+        gchar *colorimetry = g_strdup (colorimetry_string);
+        if (colorimetry) {
+          gst_caps_set_simple (src_caps, "colorimetry", G_TYPE_STRING,
+              colorimetry, NULL);
+          g_free (colorimetry);
+        }
+      }
+
+      interlace_string = gst_structure_get_string
+          (current_caps_struct, "interlace-mode");
+      if (interlace_string) {
+        gchar *interlace = g_strdup (interlace_string);
+        if (interlace) {
+          gst_caps_set_simple (src_caps, "interlace-mode", G_TYPE_STRING,
+              interlace, NULL);
+          g_free (interlace);
+        }
+      }
+
+
       if (gst_structure_get_fraction (current_caps_struct, "framerate", &fr_num,
               &fr_denom)) {
         gst_caps_set_simple (src_caps, "framerate", GST_TYPE_FRACTION, fr_num,
