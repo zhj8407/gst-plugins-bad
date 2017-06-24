@@ -108,8 +108,7 @@ static GstStaticPadTemplate srctemplate =
 static GstStaticPadTemplate sinktemplate =
     GST_STATIC_PAD_TEMPLATE ("sink", GST_PAD_SINK,
     GST_PAD_ALWAYS,
-    GST_STATIC_CAPS ("image/x-jpc;image/x-j2c")
-    );
+    GST_STATIC_CAPS ("image/x-jpc;image/x-j2c"));
 
 #define parent_class gst_jpeg2000_parse_parent_class
 G_DEFINE_TYPE (GstJPEG2000Parse, gst_jpeg2000_parse, GST_TYPE_BASE_PARSE);
@@ -333,6 +332,11 @@ gst_jpeg2000_parse_handle_frame (GstBaseParse * parse,
 
   } else {
     is_j2c = jpeg2000parse->codec_format == GST_JPEG2000_PARSE_J2C;
+
+    /* for now, just treat JP2 as JPC, which will make parser skip jp2 header for now */
+    if (jpeg2000parse->codec_format == GST_JPEG2000_PARSE_JP2) {
+      jpeg2000parse->codec_format = GST_JPEG2000_PARSE_JPC;
+    }
   }
 
   num_prefix_bytes = GST_JPEG2000_MARKER_SIZE;
